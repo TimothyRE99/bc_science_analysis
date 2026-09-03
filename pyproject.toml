@@ -26,6 +26,7 @@ dependencies = [
 ]
 
 [project.scripts]
+find_peaks = "science_analysis.scripts.find_peaks:main"
 image_observation = "science_analysis.scripts.image_observation:main"
 
 [tool.setuptools]
