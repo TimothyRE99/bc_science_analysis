@@ -7,4 +7,4 @@ from science_analysis.bc_image_analyzer import *
 
 __author__ = """Timothy R. Emeigh"""
 __email__ = "tre8@psu.edu"
-__version__ = "0.1.0"
+__version__ = "0.1.1"
