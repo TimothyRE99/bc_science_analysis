@@ -249,8 +249,8 @@ class BCImageAnalysis:
             result["counts"] = image[locations[:, 1], locations[:, 0]]
             result["local_rms"] = local_rms[locations[:, 1], locations[:, 0]]
             result["global_rms"] = image.std()
-            result["local_sig"] = result["impeak"] / result["local_rms"]
-            result["global_sig"] = result["impeak"] / result["global_rms"]
+            result["local_sig"] = result["counts"] / result["local_rms"]
+            result["global_sig"] = result["counts"] / result["global_rms"]
 
         return result
 
