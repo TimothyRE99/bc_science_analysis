@@ -3,6 +3,7 @@
 from science_analysis.bc_imager import *
 from science_analysis.bc_instrument import *
 from science_analysis.bc_image_analyzer import *
+from science_analysis.helpers import *
 
 
 __author__ = """Timothy R. Emeigh"""
