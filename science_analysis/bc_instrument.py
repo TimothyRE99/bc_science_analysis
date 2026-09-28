@@ -85,6 +85,13 @@ class BCInstrument:
         return self._teldef
 
     @cached_property
+    def detector_area(self) -> float:
+        """Total area of all pixels on the detector plane."""
+        num_dets = len(self.teldef.det_ids)
+        one_det_area = (self.teldef.raw_xscl*self.teldef.raw_xsiz)*(self.teldef.raw_yscl*self.teldef.raw_ysiz)
+        return num_dets * one_det_area
+
+    @cached_property
     def detector_boxes(self) -> npt.NDArray[np.float64]:
         """[[detx_min, dety_min], [detx_max, dety_max]] bounding boxes
         for each of the four detectors.
@@ -122,10 +129,20 @@ class BCInstrument:
         """[[detx_min, dety_min], [detx_max, dety_max]] bounding box
         for full focal plane array.
         """
+        extreme_x = np.max((
+            np.abs(self._teldef.detx_min),
+            np.abs(self._teldef.detx_max),
+        ))
+        extreme_y = np.max((
+            np.abs(self._teldef.dety_min),
+            np.abs(self._teldef.dety_max),
+        ))
         fpa_envelope = np.array(
             [
-                [self._teldef.detx_min, self._teldef.dety_min],
-                [self._teldef.detx_max, self._teldef.dety_max],
+                [-extreme_x, -extreme_y],
+                [extreme_x, extreme_y],
+                # [self._teldef.detx_min, self._teldef.dety_min],
+                # [self._teldef.detx_max, self._teldef.dety_max],
             ],
             dtype=np.float64,
         )

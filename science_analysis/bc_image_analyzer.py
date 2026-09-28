@@ -1,6 +1,7 @@
 """Module for running image-related analysis of BlackCAT eventlists."""
 
-from collections.abc import Collection
+from collections.abc import Collection, Iterable
+from functools import cached_property
 from os import PathLike
 from pathlib import Path
 from typing import Any, Optional, overload
@@ -14,13 +15,14 @@ from photutils.detection import find_peaks
 from photutils.utils.exceptions import NoDetectionsWarning
 from scipy.ndimage import uniform_filter
 
+# TODO: Implement Badpix reader
+from bc_caldb import Badpix
 from science_analysis import BCImager
-
 
 class BCImageAnalysis:
     IMPEAK_DTYPE = np.dtype(
         [
-            ("xy", (float, 2)),
+            ("xy", (int, 2)),
             ("radec", (float, 2)),  # Degrees, ICRS
             ("counts", float),
             ("local_rms", float),
@@ -29,6 +31,8 @@ class BCImageAnalysis:
             ("global_sig", float),
         ]
     )
+    # TODO: Include this in CalDB somehow?
+    LIVETIME_FRACTION = (1 - 3680 / 328270)
 
     @overload
     def __init__(
@@ -46,6 +50,7 @@ class BCImageAnalysis:
     def __init__(
         self,
         *,
+        badpix_file: PathLike | str,
         coded_mask_file: PathLike | str,
         teldef_file: PathLike | str,
         ra_dec_roll_inst: Optional[Collection[float]] = None,
@@ -59,6 +64,7 @@ class BCImageAnalysis:
         self,
         *,
         caldb_version: Optional[str] = None,
+        badpix_file: Optional[PathLike | str] = None,
         coded_mask_file: Optional[PathLike | str] = None,
         teldef_file: Optional[PathLike | str] = None,
         ra_dec_roll_inst: Optional[Collection[float]] = None,
@@ -114,6 +120,34 @@ class BCImageAnalysis:
         )
 
         self._overwrite = overwrite
+
+        if (caldb_version is None) == (badpix_file is None):
+            raise TypeError(
+                "You must specify exactly one of caldb version or badpix caldb file."
+            )
+
+        if caldb_version is None:
+            self._badpix = Badpix.from_caldb_file(badpix_file)
+        else:
+            self._badpix = Badpix.from_caldb_version(caldb_version)
+
+    @cached_property
+    def badpix_fraction(self) -> tuple[float, float, float, float]:
+        return (
+            np.sum(self._badpix.badpix_0) / np.prod(self._badpix.badpix_0.shape),
+            np.sum(self._badpix.badpix_1) / np.prod(self._badpix.badpix_1.shape),
+            np.sum(self._badpix.badpix_2) / np.prod(self._badpix.badpix_2.shape),
+            np.sum(self._badpix.badpix_3) / np.prod(self._badpix.badpix_3.shape),
+        )
+
+    @cached_property
+    def goodpix_fraction(self) -> tuple[float, float, float, float]:
+        return (
+            1 - self.badpix_fraction[0],
+            1 - self.badpix_fraction[1],
+            1 - self.badpix_fraction[2],
+            1 - self.badpix_fraction[3],
+        )
 
     @property
     def imager(self) -> BCImager:
@@ -193,6 +227,96 @@ class BCImageAnalysis:
 
         return image_hdu
 
+    @overload
+    def eventlist_to_flux_components(
+        self,
+        *,
+        counts: npt.NDArray[np.void],
+        header: Optional[fits.Header] = None,
+        add_wcs: bool = False,
+        outfile: Optional[PathLike | str] = None,
+    ) -> fits.PrimaryHDU: ...
+    @overload
+    def eventlist_to_flux_components(
+        self,
+        *,
+        fitsdata: fits.BinTableHDU | PathLike | str,
+        add_wcs: bool = False,
+        outfile: Optional[PathLike | str] = None,
+    ) -> fits.PrimaryHDU: ...
+    def eventlist_to_flux_components(
+        self,
+        *,
+        counts: Optional[npt.NDArray[np.void]] = None,
+        header: Optional[fits.Header] = None,
+        fitsdata: Optional[fits.BinTableHDU | PathLike | str] = None,
+        add_wcs: bool = False,
+        min_sigma: float = 6.0,
+        neighborhood_psf: int = 40,
+        skip_peakless: bool = True,
+        outfile: Optional[PathLike | str] = None,
+    ) -> tuple[fits.PrimaryHDU, Optional[npt.NDArray[np.float64]],  Optional[npt.NDArray[np.float64]], npt.NDArray[np.void]]:
+        """Create a sky image, find peaks, and build flux construction
+        components from event data. Event positions should be provided 
+        in DET coordinates. 
+
+        Returns a FITs HDU, two numpy arrays, and a peaks object. 
+        Writes the HDU to a fits file if a path is provided.
+
+        Arguments:
+            - counts: (Optional) Structured array containing data for
+            each event. Mututally exclusive with fitsdata.
+            - header: (Optional) FITs header for the events provided
+            by counts. Unused if fitsdata provided.
+            - fitsdata: (Optional) FITs BinTableHDU or path to a fits
+            file containing a BinTableHDU of events. Mutually
+            exclusive with counts.
+            - add_wcs: Whether to use current RA, DEC, and roll to
+            add WCS keywords to the image header.
+            - min_sigma: The minimum multiplier of the local RMS
+            necessary to be identified as a peak.
+            - neighborhood_psf: Sidelength of neighborhood in mask cells
+            - skip_peakless: Skip calculation of flux components if no
+            peaks are present
+            - outfile: (Optional) Path to write the generate image to.
+        """
+        counts, header = self._counts_header_from_args(
+            counts=counts, header=header, fitsdata=fitsdata
+        )
+
+        image_hdu = self.eventlist_to_image(
+            counts=counts,
+            header=header,
+            add_wcs=add_wcs,
+            outfile=outfile,
+        )
+        peaks = self.find_peaks(
+            image_hdu.data, image_hdu.header, min_sigma=min_sigma, neighborhood_psf=neighborhood_psf
+        )
+        if skip_peakless and len(peaks) == 0:
+            return image_hdu, None, None, peaks
+
+        q_i = np.zeros(image_hdu.shape, dtype=np.float64)
+        r_i = np.zeros(image_hdu.shape, dtype=np.float64)
+        for det_id in self.imager.instrument.teldef.det_ids:
+            det_counts = counts[counts["DETID"] == det_id]
+            det_image = self.eventlist_to_image(counts=det_counts, header=header).data
+
+            peak_counts = 0
+            for peak in peaks:
+                peak_x, peak_y = peak["xy"]
+                peak_counts += det_image[peak_y, peak_x]
+
+            background_counts = len(det_counts) - peak_counts
+            det_live_time = self.live_time(det_counts)
+            det_area = self.goodpix_fraction[det_id] * self.imager.instrument.detector_area
+            det_b = background_counts / det_area
+
+            q_i += det_image / det_b
+            r_i += self.imager.exposed_area_maps[det_id] * det_live_time / det_b
+
+        return image_hdu, q_i, r_i, peaks
+
     def find_peaks(
         self,
         image: npt.NDArray[np.floating[Any] | np.integer[Any]],
@@ -253,26 +377,7 @@ class BCImageAnalysis:
             # micro-scale noise will be falsely identified as a peak.
             result = result[result["counts"] >= 1]
 
-        return result
-
-    def get_exposed_area_map(
-        self, active_det_ids: npt.ArrayLike[np.integer[Any]]
-    ) -> npt.NDArray[np.float64]:
-        """Get a map of exposed focal plane area for each sky pixel,
-        provided which of the four detectors are active. Values are in
-        m^2.
-
-        Arguments:
-            active_det_ids: ArrayLike object of up to four unique
-            detector IDs indicating that detector is to be considered
-            active.
-        """
-        exposed_area_map = np.zeros(self.imager.image_minshape, dtype=np.float64)
-
-        for det_id in np.unique(active_det_ids):
-            exposed_area_map += self.imager.exposed_area_maps[det_id]
-
-        return exposed_area_map
+        return result[np.argsort(result["local_sig"], descending=True)]
 
     def local_rms(
         self,
@@ -410,3 +515,11 @@ class BCImageAnalysis:
                 counts, header = fits.getdata(Path(fitsdata), 1, header=True)
 
         return counts, header
+
+    @classmethod
+    def live_time(cls, counts: npt.NDArray[np.void]) -> float:
+        try:
+            live_time = cls.LIVETIME_FRACTION * (np.max(counts["TIME"]) - np.min(counts["TIME"]))
+        except ValueError:
+            live_time = 0.0
+        return live_time
