@@ -115,10 +115,11 @@ class BCImager:
         pixel can see on each of the four detectors. Values are in m^2.
         """
         sky_yidc, sky_xidc = np.indices(self.image_minshape, dtype=np.float64)
-        # Image is viewed from FPA through the mask, so it is inverted
-        # along the x-axis compared to the others
-        sky_xoffs_pix = (self.image_minshape[1] - 1) / 2 - sky_xidc
-        sky_yoffs_pix = sky_yidc - (self.image_minshape[0] - 1) / 2
+        # TODO: Make the below comment based on CalDB?
+        # Order of subtraction based on the layout of axes relative to
+        # each other.
+        sky_xoffs_pix = sky_xidc - (self.image_minshape[1] - 1) / 2
+        sky_yoffs_pix = (self.image_minshape[0] - 1) / 2 - sky_yidc
 
         focallen = self._instrument.teldef.focallen
         mask_xoffs_m = sky_xoffs_pix * self.sky_pixel_size_rad[0] * focallen
