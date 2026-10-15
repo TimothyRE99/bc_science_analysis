@@ -281,8 +281,8 @@ class BCImager:
                     np.floor([max_pixx, max_pixy]), a_min=0, a_max=None
                 ).astype(np.int32)
 
-                dph[min_pixx:max_pixx, min_pixy:max_pixy] -= dph[
-                    min_pixx:max_pixx, min_pixy:max_pixy
+                dph[min_pixx : max_pixx + 1, min_pixy : max_pixy + 1] -= dph[
+                    min_pixx : max_pixx + 1, min_pixy : max_pixy + 1
                 ].mean()
 
         return dph
@@ -291,7 +291,6 @@ class BCImager:
         # Convert detector plane histogram to a projected sky image.
 
         dph_expanded = np.zeros(self.image_fftshape, dtype=np.float32)
-        # Need to flip dphx when expanding to match desired alignment
         dph_expanded[: dph.shape[0], : dph.shape[1]] = dph
         dph_fft = self.fft_forward(dph_expanded)
         corr_fft = dph_fft * self.mask_for_correlate

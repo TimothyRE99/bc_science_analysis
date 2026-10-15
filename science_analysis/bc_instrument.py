@@ -86,18 +86,19 @@ class BCInstrument:
 
     @cached_property
     def detector_area(self) -> float:
-        """Total area of all pixels on the detector plane."""
-        num_dets = len(self.teldef.det_ids)
-        one_det_area = (self.teldef.raw_xscl*self.teldef.raw_xsiz)*(self.teldef.raw_yscl*self.teldef.raw_ysiz)
-        return num_dets * one_det_area
+        """Total area of all pixels on a given detector."""
+        detector_area = (self.teldef.raw_xscl * self.teldef.raw_xsiz) * (
+            self.teldef.raw_yscl * self.teldef.raw_ysiz
+        )
+        return detector_area
 
     @cached_property
     def detector_boxes(self) -> npt.NDArray[np.float64]:
         """[[detx_min, dety_min], [detx_max, dety_max]] bounding boxes
         for each of the four detectors.
         """
-        detcorners_rawxs = np.array([0, 0, 1650, 1650], dtype=np.float64)
-        detcorners_rawys = np.array([0, 1650, 0, 1650], dtype=np.float64)
+        detcorners_rawxs = np.array([0, 0, 1649, 1649], dtype=np.float64)
+        detcorners_rawys = np.array([0, 1649, 0, 1649], dtype=np.float64)
         detector_boxes = []
         for det_id in self._teldef.det_ids:
             detcorners_detids = np.full(
@@ -125,24 +126,35 @@ class BCInstrument:
         return np.array(detector_boxes, dtype=np.float64)
 
     @cached_property
+    def fpa_area(self) -> float:
+        """Total area of all pixels across the focal plane."""
+        num_dets = len(self.teldef.det_ids)
+        return num_dets * self.detector_area
+
+    @cached_property
     def fpa_envelope(self) -> npt.NDArray[np.float64]:
         """[[detx_min, dety_min], [detx_max, dety_max]] bounding box
-        for full focal plane array.
+        for full focal plane array. Balanced such that optical axis is
+        at the center of the drawn rectangle.
+
+        (e.g. detx_min = -detx_max, dety_min = -dety_max).
         """
-        extreme_x = np.max((
-            np.abs(self._teldef.detx_min),
-            np.abs(self._teldef.detx_max),
-        ))
-        extreme_y = np.max((
-            np.abs(self._teldef.dety_min),
-            np.abs(self._teldef.dety_max),
-        ))
+        extreme_x = np.max(
+            (
+                np.abs(self._teldef.detx_min),
+                np.abs(self._teldef.detx_max),
+            )
+        )
+        extreme_y = np.max(
+            (
+                np.abs(self._teldef.dety_min),
+                np.abs(self._teldef.dety_max),
+            )
+        )
         fpa_envelope = np.array(
             [
                 [-extreme_x, -extreme_y],
                 [extreme_x, extreme_y],
-                # [self._teldef.detx_min, self._teldef.dety_min],
-                # [self._teldef.detx_max, self._teldef.dety_max],
             ],
             dtype=np.float64,
         )
@@ -235,8 +247,8 @@ class BCInstrument:
         """Convert from (DETX, DETY) to (PIXX, PIXY).
 
         PIXX and PIXY count how many [sub]pixels you are along the
-        respective axes from the center of the lower-left FPA
-        [sub]pixel.
+        respective axes from the center of the lower-left FPA envelope
+        [sub]pixel. Centered on the [sub]pixels.
 
         Arguments:
             - detxs: Numpy array of DETX values.
