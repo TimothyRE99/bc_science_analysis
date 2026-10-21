@@ -19,6 +19,7 @@ from scipy.ndimage import uniform_filter
 from bc_caldb import Badpix
 from science_analysis import BCImager
 
+
 class BCImageAnalysis:
     IMPEAK_DTYPE = np.dtype(
         [
@@ -32,7 +33,7 @@ class BCImageAnalysis:
         ]
     )
     # TODO: Include this in CalDB somehow?
-    LIVETIME_FRACTION = (1 - 3680 / 328270)
+    LIVETIME_FRACTION = 1 - 3680 / 328270
 
     @overload
     def __init__(
@@ -235,7 +236,12 @@ class BCImageAnalysis:
         header: Optional[fits.Header] = None,
         add_wcs: bool = False,
         outfile: Optional[PathLike | str] = None,
-    ) -> fits.PrimaryHDU: ...
+    ) -> tuple[
+        fits.PrimaryHDU,
+        Optional[fits.PrimaryHDU],
+        Optional[fits.PrimaryHDU],
+        npt.NDArray[np.void],
+    ]: ...
     @overload
     def eventlist_to_flux_components(
         self,
@@ -243,7 +249,12 @@ class BCImageAnalysis:
         fitsdata: fits.BinTableHDU | PathLike | str,
         add_wcs: bool = False,
         outfile: Optional[PathLike | str] = None,
-    ) -> fits.PrimaryHDU: ...
+    ) -> tuple[
+        fits.PrimaryHDU,
+        Optional[fits.PrimaryHDU],
+        Optional[fits.PrimaryHDU],
+        npt.NDArray[np.void],
+    ]: ...
     def eventlist_to_flux_components(
         self,
         *,
@@ -255,12 +266,17 @@ class BCImageAnalysis:
         neighborhood_psf: int = 40,
         skip_peakless: bool = True,
         outfile: Optional[PathLike | str] = None,
-    ) -> tuple[fits.PrimaryHDU, Optional[npt.NDArray[np.float64]],  Optional[npt.NDArray[np.float64]], npt.NDArray[np.void]]:
+    ) -> tuple[
+        fits.PrimaryHDU,
+        Optional[fits.PrimaryHDU],
+        Optional[fits.PrimaryHDU],
+        npt.NDArray[np.void],
+    ]:
         """Create a sky image, find peaks, and build flux construction
-        components from event data. Event positions should be provided 
-        in DET coordinates. 
+        components from event data. Event positions should be provided
+        in DET coordinates.
 
-        Returns a FITs HDU, two numpy arrays, and a peaks object. 
+        Returns a FITs HDU, two numpy arrays, and a peaks object.
         Writes the HDU to a fits file if a path is provided.
 
         Arguments:
@@ -291,7 +307,10 @@ class BCImageAnalysis:
             outfile=outfile,
         )
         peaks = self.find_peaks(
-            image_hdu.data, image_hdu.header, min_sigma=min_sigma, neighborhood_psf=neighborhood_psf
+            image_hdu.data,
+            image_hdu.header,
+            min_sigma=min_sigma,
+            neighborhood_psf=neighborhood_psf,
         )
         if skip_peakless and len(peaks) == 0:
             return image_hdu, None, None, peaks
@@ -309,13 +328,19 @@ class BCImageAnalysis:
 
             background_counts = len(det_counts) - peak_counts
             det_live_time = self.live_time(det_counts)
-            det_area = self.goodpix_fraction[det_id] * self.imager.instrument.detector_area
-            det_b = background_counts / det_area
+            b_i = (
+                background_counts
+                / (self.imager.instrument.detector_area * self.goodpix_fraction[det_id])
+                / det_live_time
+            )
 
-            q_i += det_image / det_b
-            r_i += self.imager.exposed_area_maps[det_id] * det_live_time / det_b
+            q_i += det_image / b_i
+            r_i += self.imager.exposed_area_maps[det_id] * det_live_time / b_i
 
-        return image_hdu, q_i, r_i, peaks
+        q_i_hdu = fits.PrimaryHDU(q_i, header=image_hdu.header)
+        r_i_hdu = fits.PrimaryHDU(r_i, header=image_hdu.header)
+
+        return image_hdu, q_i_hdu, r_i_hdu, peaks
 
     def find_peaks(
         self,
@@ -377,7 +402,7 @@ class BCImageAnalysis:
             # micro-scale noise will be falsely identified as a peak.
             result = result[result["counts"] >= 1]
 
-        return result[np.argsort(result["local_sig"], descending=True)]
+        return result[np.argsort(result["local_sig"])[::-1]]
 
     def local_rms(
         self,
@@ -519,7 +544,9 @@ class BCImageAnalysis:
     @classmethod
     def live_time(cls, counts: npt.NDArray[np.void]) -> float:
         try:
-            live_time = cls.LIVETIME_FRACTION * (np.max(counts["TIME"]) - np.min(counts["TIME"]))
+            live_time = cls.LIVETIME_FRACTION * (
+                np.max(counts["TIME"]) - np.min(counts["TIME"])
+            )
         except ValueError:
             live_time = 0.0
         return live_time
