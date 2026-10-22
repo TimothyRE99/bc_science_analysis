@@ -319,6 +319,8 @@ class BCImageAnalysis:
         r_i = np.zeros(image_hdu.shape, dtype=np.float64)
         for det_id in self.imager.instrument.teldef.det_ids:
             det_counts = counts[counts["DETID"] == det_id]
+            if len(det_counts) == 0:
+                continue
             det_image = self.eventlist_to_image(counts=det_counts, header=header).data
 
             peak_counts = 0
