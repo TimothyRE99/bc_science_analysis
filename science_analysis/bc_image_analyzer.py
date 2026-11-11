@@ -212,6 +212,9 @@ class BCImageAnalysis:
             - add_wcs: Whether to use current RA, DEC, and roll to
             add WCS keywords to the image header.
             - outfile: (Optional) Path to write the generate image to.
+
+        Returns:
+            - image_hdu: Generated image header and data.
         """
         counts, header = self._counts_header_from_args(
             counts=counts, header=header, fitsdata=fitsdata
@@ -235,6 +238,9 @@ class BCImageAnalysis:
         counts: npt.NDArray[np.void],
         header: Optional[fits.Header] = None,
         add_wcs: bool = False,
+        min_sigma: float = 6.0,
+        neighborhood_psf: int = 40,
+        skip_peakless: bool = True,
         outfile: Optional[PathLike | str] = None,
     ) -> tuple[
         fits.PrimaryHDU,
@@ -248,6 +254,9 @@ class BCImageAnalysis:
         *,
         fitsdata: fits.BinTableHDU | PathLike | str,
         add_wcs: bool = False,
+        min_sigma: float = 6.0,
+        neighborhood_psf: int = 40,
+        skip_peakless: bool = True,
         outfile: Optional[PathLike | str] = None,
     ) -> tuple[
         fits.PrimaryHDU,
@@ -295,6 +304,18 @@ class BCImageAnalysis:
             - skip_peakless: Skip calculation of flux components if no
             peaks are present
             - outfile: (Optional) Path to write the generate image to.
+
+        Returns:
+            - image_hdu: Generated image header and data.
+            - q_i_hdu: Generated image q_i header and data. Image 
+            divided by estimated background count rate. Used for making 
+            flux maps.
+            - r_i_hdu: Generated image r_i header and data. Image 
+            coding exposure multiplied by live time and divided by 
+            estimated background count rate. Used for making flux maps.
+            - peaks: Array of peaks found within the image. Contain xy, 
+            radec, counts, local and global RMS, and local and global 
+            significance for each peak. 
         """
         counts, header = self._counts_header_from_args(
             counts=counts, header=header, fitsdata=fitsdata
@@ -350,7 +371,7 @@ class BCImageAnalysis:
         header: Optional[fits.Header] = None,
         min_sigma: float = 6.0,
         neighborhood_psf: int = 40,
-    ) -> Any:
+    ) -> npt.NDArray[np.void]:
         """Identify peaks within the image with a significance of
         min_sigma times the local RMS or higher.
 
@@ -365,6 +386,11 @@ class BCImageAnalysis:
             - min_sigma: The minimum multiplier of the local RMS
             necessary to be identified as a peak.
             - neighborhood_psf: Sidelength of neighborhood in mask cells
+
+        Returns:
+            - peaks: Array of peaks found within the image. Contain xy, 
+            radec, counts, local and global RMS, and local and global 
+            significance for each peak. 
         """
 
         with warnings.catch_warnings():
@@ -419,6 +445,10 @@ class BCImageAnalysis:
         Arguments:
             - image: BlackCAT sky image array.
             - neighborhood_psf: Sidelength of neighborhood in mask cells
+
+        Returns:
+            - local_rms: Returns map of the RMS of all pixels within 
+            the neighborhood box of each image pixel.
         """
         neighborhood_psf = (
             2 * (neighborhood_psf / (2 * self.imager.resolution_maskpix)).astype(int)
@@ -503,6 +533,100 @@ class BCImageAnalysis:
         hdu.header["CD2_2"] = (cd2_2, "Scaling and rotation matrix element 2, 2")
 
         return hdu
+
+    @overload
+    def weight_eventlist(
+        self,
+        *,
+        counts: npt.NDArray[np.void],
+        header: Optional[fits.Header] = None,
+        image_xy: tuple[int, int],
+    ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.uint8]]: ...
+    @overload
+    def weight_eventlist(
+        self,
+        *,
+        fitsdata: fits.BinTableHDU | PathLike | str,
+        image_xy: tuple[int, int],
+    ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.uint8]]: ...
+    def weight_eventlist(
+        self,
+        *,
+        counts: Optional[npt.NDArray[np.void]] = None,
+        header: Optional[fits.Header] = None,
+        fitsdata: Optional[fits.BinTableHDU | PathLike | str] = None,
+        image_xy: tuple[int, int],
+    ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.uint8]]:
+        """Weights event data based on the provided source image
+        coordinates.
+
+        Args:
+            - image_xy: Image coordinates to weight events in the 
+            direction of.
+            - counts: (Optional) Structured array containing data for
+            each event. Mututally exclusive with fitsdata.
+            - header: (Optional) FITs header for the events provided
+            by counts. Unused if fitsdata provided.
+            - fitsdata: (Optional) FITs BinTableHDU or path to a fits
+            file containing a BinTableHDU of events. Mutually
+            exclusive with counts.
+
+        Returns:
+            - weights_array: Array containing event weights. 1 for open 
+            cell, -1 for closed cell or ribs or uncoded.
+            - flags_array: Array containing flags for exact mask 
+            location quality of raytraced event. 0 is a cell (open or 
+            closed), 1 is uncoded, 2 is the ribs.
+        """
+        counts, header = self._counts_header_from_args(counts, header, fitsdata)
+
+        image_xy = np.array(image_xy, dtype=np.float64)
+        # TODO: Make the below comment based on CalDB?
+        # Order of subtraction based on the layout of axes relative to
+        # each other.
+        sky_offsets_pix = (image_xy - (self.imager.image_minshape[::-1] - 1) / 2) * np.array([1, -1], dtype=np.int8)
+        mask_offsets_m = sky_offsets_pix * self.imager.sky_pixel_size_rad * self.imager.instrument.teldef.focallen
+
+        # (0, 0) is lower left corner of the mask in (DETX, DETY)
+        # coordinate system.
+        event_cellxs, event_cellys = self.imager.instrument.detxy_to_cellxy(
+            counts["DETX"] + mask_offsets_m[0], counts["DETY"] + mask_offsets_m[1]
+        )
+
+        # TODO: Improve this to not just be -1 or +1
+        # Mask cells span [#.0, #.0+1.0), so taking floor gives the index
+        event_cell_idc_x = np.floor(event_cellxs).astype(np.intp)
+        event_cell_idc_y = np.floor(event_cellys).astype(np.intp)
+
+        weights_array = np.zeros(len(counts), dtype=np.float64)
+        flags_array = np.zeros(len(counts), dtype=np.uint8)
+
+        # Events outside the coded region for this particular source
+        # need to be masked w/ unique flag.
+        coded_mask = (
+            (0 <= event_cell_idc_x)
+            * (0 <= event_cell_idc_y)
+            * (self.imager.instrument.mask_cell_count[0] > event_cell_idc_x)
+            * (self.imager.instrument.mask_cell_count[1] > event_cell_idc_y)
+        )
+        weights_array[np.logical_not(coded_mask)] = -1
+        flags_array[np.logical_not(coded_mask)] = 1
+
+        # Open == 1; Closed == -1
+        mask_pattern = self.imager.instrument.mask_pattern * 2 - 1
+        # Ribs == 2; Cells == 0
+        frame_pattern = self.imager.instrument.frame_pattern * 2
+
+        weights_array[coded_mask] = mask_pattern[
+            event_cell_idc_y[coded_mask],
+            event_cell_idc_x[coded_mask],
+        ]
+        flags_array[coded_mask] = frame_pattern[
+            event_cell_idc_y[coded_mask],
+            event_cell_idc_x[coded_mask],
+        ]
+
+        return weights_array, flags_array
 
     @overload
     def _counts_header_from_args(

@@ -221,29 +221,30 @@ class BCInstrument:
             self._teldef.raw_xscl if self._use_subpixel else self._teldef.raw_xscl * 3
         )
 
-    def pixxy_to_detxy(
+    def detxy_to_cellxy(
         self,
-        pixxs: npt.NDArray[np.floating[Any]],
-        pixys: npt.NDArray[np.floating[Any]],
-    ) -> tuple[np.float64, np.float64]:
-        """Convert from (PIXX, PIXY) to (DETX, DETY).
+        detxs: npt.NDArray[np.floating[Any]],
+        detys: npt.NDArray[np.floating[Any]],
+    ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
+        """Convert from (DETX, DETY) to (CELLX, CELLY).
+
+        CELLX and CELLY count how many mask cells you are along the
+        respective axes from the lower left corner of the mask.
 
         Arguments:
-            - pixxs: Numpy array of how many [sub]pixels you are along
-            the x axis from the center of the lower-left FPA [sub]pixel.
-            - pixys: Numpy array of how many [sub]pixels you are along
-            the y axis from the center of the lower-left FPA [sub]pixel.
+            - detxs: Numpy array of DETX values.
+            - detys: Numpy array of DETY values.
         """
-        detx_low, dety_low = self.fpa_envelope[0]
-        detxs = pixxs * self.detx_pix_size + detx_low
-        detys = pixys * self.dety_pix_size + dety_low
-        return detxs, detys
+        detx_low, dety_low = self.mask_envelope[0]
+        cellxs = ((detxs - detx_low) * (1 / self.mask_cell_size_array[0])).astype(np.float64)
+        cellys = ((detys - dety_low) * (1 / self.mask_cell_size_array[1])).astype(np.float64)
+        return cellxs, cellys
 
     def detxy_to_pixxy(
         self,
         detxs: npt.NDArray[np.floating[Any]],
         detys: npt.NDArray[np.floating[Any]],
-    ) -> tuple[np.float64, np.float64]:
+    ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
         """Convert from (DETX, DETY) to (PIXX, PIXY).
 
         PIXX and PIXY count how many [sub]pixels you are along the
@@ -258,3 +259,21 @@ class BCInstrument:
         pixxs = ((detxs - detx_low) * (1 / self.detx_pix_size)).astype(np.float64)
         pixys = ((detys - dety_low) * (1 / self.dety_pix_size)).astype(np.float64)
         return pixxs, pixys
+
+    def pixxy_to_detxy(
+        self,
+        pixxs: npt.NDArray[np.floating[Any]],
+        pixys: npt.NDArray[np.floating[Any]],
+    ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
+        """Convert from (PIXX, PIXY) to (DETX, DETY).
+
+        Arguments:
+            - pixxs: Numpy array of how many [sub]pixels you are along
+            the x axis from the center of the lower-left FPA [sub]pixel.
+            - pixys: Numpy array of how many [sub]pixels you are along
+            the y axis from the center of the lower-left FPA [sub]pixel.
+        """
+        detx_low, dety_low = self.fpa_envelope[0]
+        detxs = pixxs * self.detx_pix_size + detx_low
+        detys = pixys * self.dety_pix_size + dety_low
+        return detxs, detys
