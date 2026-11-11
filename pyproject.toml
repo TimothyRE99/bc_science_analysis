@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "bc_science_analysis"
 version = "0.2.2"
-requires-python = ">=3.12"
+requires-python = ">=3.13, <3.14"
 description = "Scripts for running science analysis on level 1 BlackCAT data."
 authors = [
     {name = "Timothy R Emeigh", email = "tre8@psu.edu"}
@@ -23,6 +23,8 @@ dependencies = [
     "photutils",
     "reproject",
     "scipy",
+    "xraydb",
+    "soxs",
 ]
 
 [project.scripts]

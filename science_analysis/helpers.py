@@ -1,5 +1,6 @@
 """Functions used by multiple files in bc_science_analysis."""
 
+from os import PathLike
 from pathlib import Path
 from typing import Optional
 
@@ -10,6 +11,28 @@ from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
 
 from science_analysis.bc_image_analyzer import BCImageAnalysis
+
+
+def extract_paths(l1_dir: PathLike | str, obsid: str) -> tuple[Path, Path, Path]:
+    """Extract paths to the stable eventlist, attitude file, and base
+    observation directory.
+
+    Arguments:
+        - l1_dir: Path to the base directory holding level1 fits files.
+        - obsid: Observation id to retrieve the paths for.
+    """
+    yyyy = obsid[:4]
+    mm = obsid[4:6]
+    dd = obsid[6:8]
+
+    obsid_path = Path(l1_dir) / f"{yyyy}_{mm}" / f"{yyyy}{mm}{dd}" / obsid
+    attitude_path = obsid_path / "auxil" / f"bl{obsid}.att.gz"
+    events_path = obsid_path / "event" / f"bl{obsid}phpo_uf.evt.gz"
+
+    if not events_path.exists():
+        events_path = obsid_path / "event" / f"bl{obsid}pfpo_uf.evt.gz"
+
+    return events_path, attitude_path, obsid_path
 
 
 def grab_caldb(
