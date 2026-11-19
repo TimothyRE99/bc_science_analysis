@@ -8,6 +8,8 @@ from astropy.wcs import WCS
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
+from datetime import datetime
+
 
 from science_analysis.bc_image_analyzer import BCImageAnalysis
 
@@ -113,7 +115,7 @@ def write_lightcurve(
         fits.HDUList'''
     
     ### Pull event file header and data ###
-    with fits.open(event_path) as hdul:
+    with fits.open(event_file) as hdul:
         evt_prim_ext_hdu = hdul[0]
         evt_prim_header = evt_prim_ext_hdu.header
         
@@ -162,6 +164,7 @@ def write_lightcurve(
     ### create rest of extension header ###
     t_elapse = time_bine[-1]-time_bine[0]
     seqnum = evt_first_header['SEQPNUM']
+    from . import __version__ as ver # Import the software version __init__.py file
 
     ext_keywords = [
         ("TELESCOP", "BLACKCAT",                                    "Telescope mission name"),
@@ -169,8 +172,8 @@ def write_lightcurve(
         ("DATAMODE", "PHOTON",                                      "Data mode"),
         ("OBS_ID",   COPY,                                          "Observation ID"),
         ("OBS_MODE", COPY,                                          "Observation mode"),
-        ("RA_OBJ",   obj_RA,                                        "[deg] Object R.A."),  
-        ("DEC_OBJ",  obj_RA,                                        "[deg] Object Dec."), 
+        ("RA_OBJ",   obj_ra,                                        "[deg] Object R.A."),  
+        ("DEC_OBJ",  obj_dec,                                        "[deg] Object Dec."), 
         ("RADECSYS", "FK5",                                         "Celestial coord system"),
         ("EQUINOX",  2000,                                          "Equinox of celestial coord system"),
         ("MJDREFI",  60676,                                         "MJD reference day 01 Jan 2025 00:00:00"),
