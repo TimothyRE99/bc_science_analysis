@@ -138,43 +138,22 @@ def write_lightcurve(
         fits.HDUList'''
     
     ### Pull event file header and data ###
-    with fits.open(event_file) as hdul:
-        evt_prim_ext_hdu = hdul[0]
-        evt_prim_header = evt_prim_ext_hdu.header
-        
-        evt_first_ext_hdu = hdul[1]
-        evt_first_header = evt_first_ext_hdu.header
-        evt_first_data = evt_first_ext_hdu.data
+    evt_prim_header = fits.getheader(event_file, 0)
+    evt_first_data, evt_first_header = fits.getdata(event_file, 1, header=True)
 
-    ### architecture to build headers ###
-    COPY = object()   # marker meaning: take the value from evt_first_header
+
 
     ### Create primary Header ###
-    prim_keywords = [
-        ("TELESCOP", "BLACKCAT",                                    "Telescope mission name"),
-        ("INSTRUME", "BLACKCAT",                                    "Instrument name"),
-        ("DATAMODE", "PHOTON",                                      "Datamode"),
-        ("OBS_ID",   COPY,                                          "Observation ID"),
-        ("DATE-OBS", COPY,                                          "Start Date"),
-        ("DATE-END", COPY,                                          "Stop Date"),
-        ("ORIGIN",   "PENNSTATE",                                   "Origin of the FITS file"),
-        ("DATE",     datetime.now().isoformat(timespec="seconds"),  "File creation date"), 
-        ("CREATOR",  "BC_SCIENCE_ANALYSIS",                         "Software that created the file"),
-    ]
-    prim_header = fits.Header()
-
-    for key, value, comment in prim_keywords:
-        if value is COPY:
-            value = evt_prim_header[key]   # pull the value from the event file
-        prim_header[key] = (value, comment)
-
-    prim_hdu = fits.PrimaryHDU(header=prim_header)
+    prim_header = evt_prim_header #Copy over most values from the event file primary header
+    prim_header['DATE'] = datetime.now().isoformat(timespec="seconds")
+    prim_header['CREATOR'] = "BC_SCIENCE_ANALYSIS"
 
     ### Create primary HDU ###
     prim_hdu = fits.PrimaryHDU(header=prim_header)
 
+    ### Create extension data ###
     ext_data = fits.ColDefs([
-        fits.Column(name="TIME",  format="1D", unit="s",       array=time_bine[:-1]),
+        fits.Column(name="TIME",  format="1D", unit="s",       array=time_bine[1:]),
         fits.Column(name="RATE",  format="1E", unit="count/s", array=lc),
         fits.Column(name="ERROR", format="1E", unit="count/s", array=lc_err),
     ])
@@ -185,63 +164,55 @@ def write_lightcurve(
     ext_hdu.header.comments["TTYPE3"] = "Background subtracted rate error"
 
     ### create rest of extension header ###
-    t_elapse = time_bine[-1]-time_bine[0]
-    seqnum = evt_first_header['SEQPNUM']
     from . import __version__ as ver # Import the software version __init__.py file
 
-    ext_keywords = [
-        ("TELESCOP", "BLACKCAT",                                    "Telescope mission name"),
-        ("INSTRUME", "BLACKCAT",                                    "Instrument name"),
-        ("DATAMODE", "PHOTON",                                      "Data mode"),
-        ("OBS_ID",   COPY,                                          "Observation ID"),
-        ("OBS_MODE", COPY,                                          "Observation mode"),
-        ("RA_OBJ",   obj_ra,                                        "[deg] Object R.A."),  
-        ("DEC_OBJ",  obj_dec,                                        "[deg] Object Dec."), 
-        ("RADECSYS", "FK5",                                         "Celestial coord system"),
-        ("EQUINOX",  2000,                                          "Equinox of celestial coord system"),
-        ("MJDREFI",  60676,                                         "MJD reference day 01 Jan 2025 00:00:00"),
-        ("MJDREFF",  8.007407407407e-04,                            "MJD reference (fraction of day)"),
-        ("TIMEREF",  "LOCAL",                                       "Reference Frame"),
-        ("TASSIGN",  "SATELLITE",                                   "Time assigned"),
-        ("TIMESYS",  "TT",                                          "Time system"),
-        ("TIMEUNIT", "s",                                           "Time unit for timing header keywords"),
-        ("TIMEPIXR", 1,                                             "Time stamps refer to end of each bin"),  
-        ("TIMEDEL",  time_bine[1]-time_bine[0],                     "Time quantization"),  
-        ("CLOCKAPP", False,                                         "If clock corrections are applied (T/F)"),
-        ("DATE-OBS", COPY,                                          "Start Date UTC"),
-        ("DATE-END", COPY,                                          "Stop Date UTC"),
-        ("TSTART",   time_bine[0],                                  "Start time"),  
-        ("TSTOP",    time_bine[-1],                                 "Stop time"),   
-        ("DEADAPP",  False,                                         "If deadtime applied"),
-        ("TELAPSE",  t_elapse,                                      "TSTOP-TSTART in sec"),  
-        ("ONTIME",   evt_first_header.get('ONTIME', t_elapse),      "Sum good time interval in sec"),  #if there is no good time interval, set to T_ELAPSE
-        ("TRIG_ID",  evt_first_header.get('TRIG_ID', None),         "Trigger id"), 
-        ("TRIGGER",  evt_first_header.get('TRIGGER', None),         "Trigger number"), 
-        ("TRIGTIME", evt_first_header.get('TRIGTIME', None),        "Trigger Time sec since 01 Jan 2025 00:00:00"),
-        ("TRIGUTC",  evt_first_header.get('TRIGUTC', None),         "Time of Trigger Time in UTC"),
-        ("E_MIN",    e_min,                                         "Lower energy boundary"), 
-        ("E_MAX",    e_min,                                         "High energy boundary"), 
-        ("E_UNIT",   "keV",                                         "Unit for the energy"),
-        ("HDUCLASS", "OGIP",                                        "Format conforms to OGIP standard"),
-        ("HDUCLAS1", "LIGHTCURVE",                                  "hduclass1"),
-        ("CREATOR",  "BC_SCIENCE_ANALYSIS",                         "Software that created the file"),
-        ("PROCVER",  ver+'.'+evt_first_header['CALDBVER'],          "Processing version"), #combine caldb & software version
-        ("CALDBVER", COPY,                                          "CALDB version"),
-        ("SEQPNUM",  t_elapse + 1 if reprocessing else t_elapse,    "Number of times the dataset has been processed"), #Tim needs to think #optional parameter (reprocessing  = True/False) if True take number and add 1 
-        ("SOFTVER",  ver,                                           "Software version"),  #read init.py for value
-        ("ORIGIN",   "GSFC",                                        "Origin of the FITS file"),
-        ("DATE",     datetime.now().isoformat(timespec="seconds"),  "File creation date"), 
-    ]
-
-
-    for key, value, comment in ext_keywords:
-        if value is COPY:
-            value = evt_first_header[key]   # pull the value from the event file
-        ext_hdu.header[key] = (value, comment)
+    ext_hdu.header["TELESCOP"] = evt_first_header.cards["TELESCOP"]
+    ext_hdu.header["INSTRUME"] = evt_first_header.cards["INSTRUME"]
+    ext_hdu.header["DATAMODE"] = evt_first_header.cards["DATAMODE"]
+    ext_hdu.header["OBS_ID"]   = evt_first_header.cards["OBS_ID"]
+    ext_hdu.header["OBS_MODE"] = evt_first_header.cards["OBS_MODE"]
+    ext_hdu.header["RA_OBJ"]   = (obj_ra, "[deg] Object R.A.")
+    ext_hdu.header["DEC_OBJ"]  = (obj_dec, "[deg] Object Dec.")
+    ext_hdu.header["RADECSYS"] = evt_first_header.cards["RADECSYS"]
+    ext_hdu.header["EQUINOX"]  = evt_first_header.cards["EQUINOX"]
+    ext_hdu.header["MJDREFI"]  = evt_first_header.cards["MJDREFI"]
+    ext_hdu.header["MJDREFF"]  = evt_first_header.cards["MJDREFF"]
+    ext_hdu.header["TIMEREF"]  = evt_first_header.cards["TIMEREF"]
+    ext_hdu.header["TASSIGN"]  = evt_first_header.cards["TASSIGN"]
+    ext_hdu.header["TIMESYS"]  = evt_first_header.cards["TIMESYS"]
+    ext_hdu.header["TIMEUNIT"] = evt_first_header.cards["TIMEUNIT"]
+    ext_hdu.header["TIMEPIXR"] = evt_first_header.cards["TIMEPIXR"]
+    ext_hdu.header["TIMEDEL"]  = (time_bine[1] - time_bine[0], "Time quantization")
+    ext_hdu.header["CLOCKAPP"] = evt_first_header.cards["CLOCKAPP"]
+    ext_hdu.header["DATE-OBS"] = evt_first_header.cards["DATE-OBS"]
+    ext_hdu.header["DATE-END"] = evt_first_header.cards["DATE-END"]
+    ext_hdu.header["TSTART"]   = (time_bine[0], "Start time")
+    ext_hdu.header["TSTOP"]    = (time_bine[-1], "Stop time")
+    ext_hdu.header["DEADAPP"]  = evt_first_header.cards["DEADAPP"]
+    ext_hdu.header["TELAPSE"]  = (time_bine[-1] - time_bine[0], "TSTOP-TSTART in sec")
+    ext_hdu.header["ONTIME"]   = (evt_first_header.get('ONTIME', time_bine[-1] - time_bine[0]), "Sum good time interval in sec")
+    ext_hdu.header["TRIG_ID"]  = (evt_first_header.get('TRIG_ID', None), "Trigger id")
+    ext_hdu.header["TRIGGER"]  = (evt_first_header.get('TRIGGER', None), "Trigger number")
+    ext_hdu.header["TRIGTIME"] = (evt_first_header.get('TRIGTIME', None), "Trigger Time sec since 01 Jan 2025 00:00:00")
+    ext_hdu.header["TRIGUTC"]  = (evt_first_header.get('TRIGUTC', None), "Time of Trigger Time in UTC")
+    ext_hdu.header["E_MIN"]    = (e_min, "Lower energy boundary")
+    ext_hdu.header["E_MAX"]    = (e_max, "High energy boundary")
+    ext_hdu.header["E_UNIT"]   = ("keV", "Unit for the energy")
+    ext_hdu.header["HDUCLASS"] = evt_first_header.cards["HDUCLASS"]
+    ext_hdu.header["HDUCLAS1"] = evt_first_header.cards["HDUCLAS1"]
+    ext_hdu.header["HDUCLAS1"] = "LIGHTCURVE"
+    ext_hdu.header["CREATOR"]  = prim_header.cards["CREATOR"]
+    ext_hdu.header["PROCVER"]  = (ver + '.' + evt_first_header['CALDBVER'], "Processing version")
+    ext_hdu.header["CALDBVER"] = evt_first_header.cards["CALDBVER"]
+    ext_hdu.header["SEQPNUM"]  = (time_bine[-1] - time_bine[0] + 1 if reprocessing else time_bine[-1] - time_bine[0], "Number of times the dataset has been processed")
+    ext_hdu.header["SOFTVER"]  = (ver, "Software version")
+    ext_hdu.header["ORIGIN"]   = ("GSFC", "Origin of the FITS file")
+    ext_hdu.header["DATE"]     = (datetime.now().isoformat(timespec="seconds"), "File creation date")
+    
 
     #Create extension HDU
     hdul_lc = fits.HDUList([prim_hdu, ext_hdu])
     if outfile is not None:
         hdul_lc.writeto(Path(outfile), overwrite=True, checksum=True)
-    else:
-        return hdul_lc
+    
+    return hdul_lc
